@@ -1,5 +1,5 @@
 // ================================================================
-// SURGE PROTECTOR v1.0.0 | CONTEXT
+// SURGE PROTECTOR v1.1.0 | CONTEXT
 // Mode 1: authorization. Mode 2: advisory hints + diagnostics.
 // Release: v1.0 advisory Mode 2 and explicit Mode 1.
 // ================================================================

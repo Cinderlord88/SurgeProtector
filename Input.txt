@@ -1,5 +1,5 @@
 // ================================================================
-// SURGE PROTECTOR v1.0.0 | INPUT
+// SURGE PROTECTOR v1.1.0 | INPUT
 // Mode 1: explicit activation. Mode 2: advisory natural-language guidance.
 // Release: v1.0 initial stable package; triggerless docs and alternate commands.
 // ================================================================
