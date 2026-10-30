@@ -1,0 +1,111 @@
+// ================================================================
+// SURGE PROTECTOR v1.0.0 | OUTPUT
+// Mode 1: diagnostics. Mode 2: advisory narration + diagnostics.
+// Release: v1.0; all four tabs use this version.
+// ================================================================
+// OUTPUT = display administrative replies and log narrative outcomes.
+//  1. Replace command-generation output with OOC command confirmation.
+//  2. Strip leaked legacy classifier metadata from story output.
+//  3. Log Mode 1 decisions, or parse Mode 2 metadata.
+//  WARNING: this phase does not independently rewrite forbidden story effects.
+const modifier = (text) => {
+  const sp = spInit();
+  const mode1 = spMode1Init(sp);
+  sp.outputRuns += 1;
+  if (mode1.pendingCommand) { // Mode switches must acknowledge in either mode.
+    const reply = mode1.pendingCommand.reply;
+    spLog('COMMAND OUTPUT', 'generation=' + sp.generationTurns + ' operation=' + mode1.pendingCommand.operation + ' replyChars=' + reply.length);
+    mode1.pendingCommand = null;
+    mode1.pendingGeneration = null;
+    return { text: reply };
+  }
+  // Strip any leaked legacy classifier metadata even when Mode 1 does not request it.
+  const cleaned = spExtractClass(text);
+  let shownText = cleaned.text;
+  if (sp.settings.gameMode === 1) {
+    const pending = mode1.pendingGeneration;
+    // Model-generated semantics are POST-generation evidence only. A MATCH
+    // cannot override the Context authorization and a MISMATCH cannot safely
+    // rewrite or erase narrative without another independent audit mechanism.
+    const parsedSemantic = spExtractSemantic(cleaned.text);
+    shownText = parsedSemantic.text;
+    const expected = !!(pending && pending.semanticExpected);
+    const semanticStatus = expected ? parsedSemantic.status : 'SKIPPED';
+    const cls = expected ? parsedSemantic.classification : null;
+    const deterministicBlock = !!(pending && pending.suppression && pending.suppression.result === 'BLOCK');
+    const conflict = expected && (deterministicBlock && cls === 'MATCH' || cls === 'MISMATCH' && !deterministicBlock);
+    mode1.lastSemantic = {generation:sp.generationTurns,status:semanticStatus,
+      classification:cls,reason:expected?parsedSemantic.reason:null,
+      precheck:pending && pending.semantic ? pending.semantic.result : 'SKIP',
+      authorization:pending && pending.authorization ? pending.authorization.result : 'NONE',
+      suppression:pending && pending.suppression ? pending.suppression.result : 'NONE',
+      conflict:conflict,misplaced:expected && parsedSemantic.misplaced};
+    const stats=mode1.semanticStats;
+    const key=semanticStatus==='VALID'?'valid':semanticStatus.toLowerCase();
+    if(typeof stats[key]==='number') stats[key]++;
+    if(expected && parsedSemantic.misplaced) stats.misplaced++;
+    if(conflict) stats.conflict++;
+    spLog('SEMANTIC','generation='+sp.generationTurns+
+      ' status='+semanticStatus+' class='+(cls||'NONE')+
+      ' pre='+(pending && pending.semantic ? pending.semantic.result : 'SKIP')+
+      ' auth='+(pending && pending.authorization ? pending.authorization.result : 'NONE')+
+      ' conflict='+conflict+
+      ' expected='+expected+
+      ' markerSeen='+parsedSemantic.markerSeen+
+      ' rawTags='+parsedSemantic.rawTags+
+      ' misplaced='+parsedSemantic.misplaced);
+    const status = pending ? pending.status : 'SKIP';
+    spLog('MODE1 OUTPUT', 'generation=' + sp.generationTurns +
+      ' activation=' + status +
+      ' auth=' + (pending && pending.authorization ? pending.authorization.result : 'NONE') +
+      ' suppress=' + (pending && pending.suppression ? pending.suppression.result : 'NONE') +
+      ' power=' + (pending && pending.power ? pending.power : 'NONE') +
+      ' legacyTags=' + cleaned.tokenCount +
+      ' rawChars=' + text.length + ' shownChars=' + parsedSemantic.text.length);
+    // Read-only audit: compare the current OUTPUT to the saved CURRENT TURN
+    // authorization. Never grant powers or rewrite story from uncertain prose.
+    if (pending && pending.status === 'REGISTERED' && pending.powerSignature) {
+      const audit = spAuditOutcome(pending, shownText);
+      mode1.lastAudit = {generation:pending.generation,result:audit.result,
+        confidence:audit.confidence,execution:audit.execution,reason:audit.reason,
+        effect:audit.effect||null,trigger:pending.trigger};
+      const resolution = spResolveDualAudit(pending,audit);
+      mode1.lastResolution = {generation:pending.generation,trigger:pending.trigger,
+        status:resolution.status,jsVerdict:resolution.jsVerdict,
+        observed:resolution.observed,execution:resolution.execution,
+        conflict:resolution.conflict,rewrite:false};
+      const recorded = spSavePrecedent(mode1,pending,audit,resolution);
+      spLog('DUAL AUDIT','generation='+pending.generation+' trigger='+pending.trigger+
+        ' js='+resolution.jsVerdict+' observed='+resolution.observed+
+        ' decision='+resolution.status+' conflict='+resolution.conflict+
+        ' rewrite=false');
+      spLog('OUTCOME AUDIT','generation='+pending.generation+' trigger='+pending.trigger+
+        ' result='+audit.result+' confidence='+audit.confidence+
+        ' execution='+audit.execution+' reason='+audit.reason+
+        ' cached='+!!recorded);
+    }
+    mode1.pendingGeneration = null;
+  } else {
+    const pending = sp.pendingClass;
+    const status = pending ? cleaned.status : (cleaned.hadMarker ? 'STRAY' : 'SKIPPED');
+    if (pending) {
+      if (status === 'VALID') sp.classResults.valid += 1;
+      else if (status === 'RECOVERED') sp.classResults.recovered += 1;
+      else if (status === 'DUPLICATE') sp.classResults.duplicate += 1;
+      else if (status === 'MALFORMED') sp.classResults.malformed += 1;
+      else sp.classResults.missing += 1;
+      sp.lastClassification = {
+        generation: pending.generation, type: pending.type, actionText: pending.actionText,
+        status, classification: cleaned.classification,
+        recoveredFrom: cleaned.recoveredFrom
+      };
+      spLog('CLASS', 'generation=' + pending.generation + ' type=' + pending.type +
+        ' status=' + status + ' class=' + (cleaned.classification || 'NONE'));
+    }
+    sp.pendingClass = null;
+  }
+  spLog('OUTPUT', 'run=' + sp.outputRuns + ' generation=' + sp.generationTurns +
+    ' inputTurns=' + sp.inputRuns + ' mode=' + sp.settings.gameMode);
+  return { text: shownText };
+};
+modifier(text);

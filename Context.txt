@@ -1,0 +1,194 @@
+// ================================================================
+// SURGE PROTECTOR v1.0.0 | CONTEXT
+// Mode 1: authorization. Mode 2: advisory hints + diagnostics.
+// Release: v1.0 advisory Mode 2 and explicit Mode 1.
+// ================================================================
+// CONTEXT = the final authorization/suppression decision for this generation.
+//  1. Bypass classification on administrative command turns.
+//  2. Preserve the older Mode 2 diagnostic path unchanged.
+//  3. Consume one Input activation only (Continue never reuses one).
+//  4. Compare effect against registry limits, produce AI instructions.
+//  5. Log AUTH and SUPPRESS independently, then inject within budget.
+const modifier = (text) => {
+  const sp = spInit();
+  const mode1 = spMode1Init(sp);
+  sp.contextRuns += 1;
+  sp.generationTurns += 1;
+  const action = spActionInfo();
+  sp.pendingAssessment = null;
+  sp.pendingProbe = null;
+  sp.pendingClass = null;
+  mode1.pendingGeneration = null;
+  if (mode1.pendingCommand) {
+    spLog('COMMAND CONTEXT', 'generation=' + sp.generationTurns + ' operation=' + mode1.pendingCommand.operation);
+    return { text: text }; // Output replaces the generated text with the command acknowledgement.
+  }
+
+  if (sp.settings.gameMode !== 1 && sp.settings.m2AlphaEnabled === true) {
+    // M2-03: AI-led interpretation assisted by registered-only candidates.
+    // Old diagnostic classification tags are no longer requested here.
+    if (!spShouldAssess(action.type)) {
+      spLog('M2 CONTEXT', 'generation='+sp.generationTurns+' type='+action.type+' status=SKIP');
+      return {text};
+    }
+    const hint = spM2BuildContextHints(action.lastHistoryText, mode1.registry, 2400);
+    // M2-03.2: read-only live diagnostic for zero-candidate reports.
+    // Input and Context can see different history snapshots in AI Dungeon.
+    // Do not use either diagnostic result to grant or activate powers.
+    const inputText = sp.lastInput && typeof sp.lastInput.text === 'string'
+      ? sp.lastInput.text : '';
+    const historyMatches = spM2FindCandidates(action.lastHistoryText, mode1.registry, 3);
+    const inputMatches = spM2FindCandidates(inputText, mode1.registry, 3);
+    const registryNames = Object.keys(mode1.registry).map(function (key) {
+      const p = mode1.registry[key];
+      return key + ':' + (p && typeof p.name === 'string' ? p.name : '?');
+    }).join(',');
+    spLog('M2 DIAG', 'generation=' + sp.generationTurns +
+      ' normalizer=' + (typeof spM2ActionClueTokens === 'function') +
+      ' historyText=' + JSON.stringify(spBrief(action.lastHistoryText, 180)) +
+      ' inputText=' + JSON.stringify(spBrief(inputText, 180)) +
+      ' registry=' + (registryNames || '(empty)') +
+      ' historyCandidates=' + (hint.candidates || 0) +
+      ' historyNames=' + (historyMatches.candidates.map(c => c.trigger).join(',') || '(none)') +
+      ' historySources=' + (historyMatches.candidates.map(c => c.trigger + ':' + c.source).join(',') || '(none)') +
+      ' inputCandidates=' + inputMatches.candidates.length +
+      ' inputNames=' + (inputMatches.candidates.map(c => c.trigger).join(',') || '(none)') +
+      ' inputSources=' + (inputMatches.candidates.map(c => c.trigger + ':' + c.source).join(',') || '(none)') +
+      ' unregisteredMethod=' + !!inputMatches.flags.unregisteredMethod);
+    if (hint.skipped) {
+      spLog('M2 HINT', 'generation='+sp.generationTurns+' status=SKIP reason='+hint.reason);
+      return {text};
+    }
+    const appended = spAddDiagnosticContext(text, hint.text);
+    spLog('M2 HINT', 'generation='+sp.generationTurns+
+      ' status='+(appended.skipped?'SKIP':'SENT')+
+      ' candidates='+(hint.candidates||0)+
+      ' guides='+(appended.skipped?0:hint.used)+
+      ' coverage='+(appended.skipped?'NONE':(hint.coverage||'NONE'))+
+      ' omitted='+(appended.skipped?(hint.candidates||0):(hint.omitted||0))+
+      ' contextChars='+(appended.skipped?text.length:appended.text.length)+
+      ' trimmed='+(appended.trimmed||0));
+    return {text:appended.skipped?text:appended.text};
+  }
+
+  if (sp.settings.gameMode !== 1) {
+    // Compatibility: older diagnostic-only Mode 2 remains unchanged unless
+    // the user explicitly switches to the M2 alpha via #POWER MODE 2.
+    if (!spShouldAssess(action.type)) {
+      spLog('CONTEXT', 'run=' + sp.contextRuns + ' type=' + action.type + ' mode=2 class=SKIP');
+      return { text };
+    }
+    const older = spAddDiagnosticContext(text, spClassPrompt(action.type, action.lastHistoryText));
+    if (older.skipped) return { text };
+    sp.pendingClass = { generation: sp.generationTurns, type: action.type,
+      actionText: spBrief(action.lastHistoryText, 220) };
+    spLog('CONTEXT', 'generation=' + sp.generationTurns + ' mode=2 class=REQUESTED');
+    return { text: older.text };
+  }
+
+  // Continue skips the Input hook; do not accidentally reuse its previous activation.
+  const pending = mode1.pendingInput;
+  mode1.pendingInput = null;
+  if (!spShouldAssess(action.type)) {
+    spLog('MODE1 CONTEXT', 'generation=' + sp.generationTurns +
+      ' type=' + action.type + ' status=SKIP');
+    return { text };
+  }
+
+  const decision = pending || { status: 'NONE', trigger: null, power: null };
+  // Stage A: conservative semantic precheck. This is independent of the later
+  // storyteller tag and can only veto facts obvious in the player's action.
+  const effectLedger = decision.status === 'REGISTERED'
+    ? spEffectLedger(decision.power, action.type, action.lastHistoryText) : null;
+  const semantic = decision.status === 'REGISTERED'
+    ? spSemanticPrecheck(decision.power, action.type, action.lastHistoryText, effectLedger)
+    : {result:'SKIP',reason:'NOT_REGISTERED'};
+  const authorization = spMode1Authorize(action.type, action.lastHistoryText, decision, semantic);
+  const suppression = spMode1Suppress(action.type, action.lastHistoryText, decision, authorization, effectLedger);
+  // Retrieve definition-matched examples from the compact case memory.
+  // Advisory only; these examples CANNOT change authorization or suppression.
+  const precedentNotes = decision.status === 'REGISTERED' && sp.settings.precedentHintsEnabled
+    ? spPrecedentHints(mode1, decision.power, action.lastHistoryText, authorization)
+    : {text:'',used:0};
+  mode1.lastPrecedents = {generation:sp.generationTurns,used:precedentNotes.used};
+  spLog('PRECEDENT', 'generation='+sp.generationTurns+' trigger='+(decision.trigger||'NONE')+
+    ' used='+precedentNotes.used+' hints='+(sp.settings.precedentHintsEnabled?'ON':'OFF')+' registryAuthority=UNCHANGED');
+  // Metadata is optional. On tight context budgets keep hard enforcement
+  // first; remove the diagnostic-only semantic request before skipping Context.
+  let semanticExpected = decision.status === 'REGISTERED' && sp.settings.semanticTagsEnabled === true;
+  let prompt = spMode1ContextPrompt(action.type, action.lastHistoryText, decision, sp, authorization, suppression, semanticExpected, precedentNotes.text, effectLedger);
+  let appended = spAddDiagnosticContext(text, prompt);
+  if (appended.skipped && semanticExpected) {
+    semanticExpected = false;
+    prompt = spMode1ContextPrompt(action.type, action.lastHistoryText, decision, sp, authorization, suppression, false, precedentNotes.text);
+    appended = spAddDiagnosticContext(text, prompt);
+    spLog('SEM BUDGET', 'generation=' + sp.generationTurns + ' tagPrompt=SKIPPED hardRules=PRESERVED');
+  }
+  if (decision.status === 'REGISTERED') {
+    spLog('SEM REQUEST', 'generation=' + sp.generationTurns +
+      ' sent=' + (!appended.skipped && semanticExpected) +
+      ' marker=' + (!appended.skipped && appended.text.indexOf('[SP_SEM|MATCH|') !== -1) +
+      ' promptChars=' + prompt.length +
+      ' contextChars=' + (appended.skipped ? text.length : appended.text.length) +
+      ' maxChars=' + (info && typeof info.maxChars === 'number' ? info.maxChars : 'UNKNOWN') +
+      ' trimmed=' + (appended.trimmed || 0));
+  }
+  if (appended.skipped) {
+    spLog('MODE1 CONTEXT', 'generation=' + sp.generationTurns + ' status=SKIP reason=NO_CONTEXT_BUDGET');
+    return { text };
+  }
+  mode1.pendingGeneration = {
+    generation: sp.generationTurns, type: action.type,
+    status: decision.status, trigger: decision.trigger || null,
+    power: decision.power ? decision.power.name : null,
+    authorization: authorization, suppression: suppression, semantic: semantic,
+    effectLedger: effectLedger,
+    jsVerdict: spJsAuthorizationVerdict(authorization),
+    semanticExpected: semanticExpected,
+    powerSignature: decision.power && decision.status === 'REGISTERED'
+      ? spPowerSignature(decision.power) : null,
+    requestedCategories: decision.status === 'REGISTERED'
+      ? effectLedger.effects.map(e => e.category) : [],
+    actionSlot: sp.lastInput && sp.lastInput.actionCount != null
+      ? String(sp.lastInput.actionCount)+'|'+String(sp.lastInput.historyLength)+'|'+
+        String(decision.trigger)+'|'+spBrief(action.lastHistoryText,130) : null
+  };
+  if (effectLedger) spLog('EFFECT LEDGER', 'generation='+sp.generationTurns+
+    ' coverage='+effectLedger.coverage+' effects='+effectLedger.effects.map(e=>e.category+':'+e.verdict).join(',')+
+    ' unresolved='+effectLedger.unresolved.length+' review='+(authorization.result==='REVIEW'));
+  if (decision.status==='REGISTERED') {
+    const pressure=spNarrativeScopePressure(decision.power,action.lastHistoryText);
+    if (pressure) spLog('SCOPE PRESSURE', 'generation='+sp.generationTurns+
+      ' trigger='+(decision.trigger||'NONE')+' severity='+pressure.severity+
+      ' anchors='+pressure.anchors.join(',')+' scale='+pressure.scale+' grant=UNCHANGED');
+  }
+  if (suppression.result==='GATE') spLog('CAPABILITY GATE', 'generation='+sp.generationTurns+
+    ' trigger='+(decision.trigger||'NONE')+' unresolved='+effectLedger.unresolved.length+
+    ' recognizedEligible='+effectLedger.effects.filter(e=>e.verdict==='ELIGIBLE').map(e=>e.category).join(',')+
+    ' scope='+suppression.scope+' grant=NONE_FOR_UNCLASSIFIED');
+  // Store scoped, provenance-tagged JS decisions, never an automatic grant for an unknown extra effect.
+  // This does NOT claim the story's eventual outcome was a success or failure.
+  const authRecord = spRecordAuthorizationPrecedent(mode1, mode1.pendingGeneration);
+  spLog('AUTH MEMORY', 'generation=' + sp.generationTurns +
+    ' trigger=' + (decision.trigger || 'NONE') +
+    ' verdict=' + mode1.pendingGeneration.jsVerdict +
+    ' cached=' + !!authRecord + ' reusable=' + !!(authRecord && authRecord.verifiedAuthorization) + ' outcome=PENDING');
+  mode1.lastActivation = mode1.pendingGeneration;
+  mode1.lastSuppression = suppression;
+  mode1.generations += 1;
+  spLog('SEM PRE', 'generation=' + sp.generationTurns +
+    ' trigger=' + (decision.trigger || 'NONE') + ' result=' + semantic.result + ' reason=' + semantic.reason);
+  spLog('AUTH', 'generation=' + sp.generationTurns +
+    ' trigger=' + (decision.trigger || 'NONE') +
+    ' result=' + authorization.result + ' reason=' + authorization.reason +
+    (authorization.observed != null ? ' observed=' + authorization.observed + authorization.unit + ' cap=' + authorization.cap + authorization.unit : ''));
+  spLog('SUPPRESS', 'generation=' + sp.generationTurns +
+    ' result=' + suppression.result + ' reason=' + suppression.reason +
+    ' scope=' + suppression.scope + (suppression.maxRangeFt ? ' cap=' + suppression.maxRangeFt + 'ft' : ''));
+  spLog('MODE1 CONTEXT', 'generation=' + sp.generationTurns +
+    ' type=' + action.type + ' trigger=' + (decision.trigger || 'NONE') +
+    ' status=' + decision.status + ' charsBefore=' + text.length +
+    ' charsAfter=' + appended.text.length + ' trimmed=' + appended.trimmed);
+  return { text: appended.text };
+};
+modifier(text);

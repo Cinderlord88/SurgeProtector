@@ -1,0 +1,59 @@
+// ================================================================
+// SURGE PROTECTOR v1.0.0 | INPUT
+// Mode 1: explicit activation. Mode 2: advisory natural-language guidance.
+// Release: v1.0 initial stable package; triggerless docs and alternate commands.
+// ================================================================
+// INPUT = command routing and trigger stripping. It does not authorize outcomes.
+//  1. Initialize state and clear stale pending turn fields.
+//  2. Run a #POWER/#SPELL command if present (priority over #ability).
+//  3. Otherwise strip leading #ability and store activation for Context.
+//  4. Return text to AI Dungeon; the player's actual story action remains.
+const modifier = (text) => {
+  const sp = spInit();
+  const mode1 = spMode1Init(sp);
+  spSyncReferenceCards(sp); // Player-only documentation, never injected into context.
+  sp.turns += 1;
+  sp.inputRuns += 1;
+  const action = spActionInfo(); // The Input history type may be stale.
+  let resultText = text;
+  mode1.pendingInput = null;
+  mode1.pendingCommand = null;
+  const command = spCommandParse(text); // Commands work in BOTH modes, including mode switching.
+  if (command) {
+    const reply = spExecCommand(sp, command);
+    mode1.pendingCommand = { reply: reply, group: command.group, operation: command.operation, inputRuns: sp.inputRuns };
+    spLog('COMMAND', 'inputTurns=' + sp.inputRuns + ' group=' + command.group + ' operation=' + command.operation + ' reply=' + spBrief(reply, 180));
+    // AI Dungeon Input stop/empty text can error. A minimal nonempty OOC marker
+    // is less intrusive than inventing an in-character action. The output hook
+    // replaces AI narration with the command reply; history may retain this marker.
+    return { text: '> …' };
+  }
+
+  if (sp.settings.gameMode === 1) {
+    const parsed = spMode1ParseInput(text, mode1.registry);
+    resultText = parsed.text;
+    mode1.pendingInput = {
+      status: parsed.status,
+      trigger: parsed.trigger,
+      inputRuns: sp.inputRuns,
+      power: parsed.power || null, requestedCastLevel: parsed.requestedCastLevel, castLevel: parsed.castLevel
+    };
+    const countKey = parsed.status === 'REGISTERED' ? 'registered'
+      : parsed.status === 'UNKNOWN' || parsed.status === 'LEVEL_DENIED' ? 'unknown' : 'none';
+    mode1.inputStats[countKey] += 1;
+    spLog('MODE1 INPUT', 'inputTurns=' + sp.inputRuns +
+      ' trigger=' + (parsed.trigger || 'NONE') + ' status=' + parsed.status +
+      ' stripped=' + parsed.stripped +
+      (parsed.power ? ' power=' + parsed.power.name + ' level=' + parsed.power.level : ''));
+  }
+  sp.lastInput = {
+    text: resultText, historyType: action.type,
+    historyLength: action.historyLength,
+    actionCount: typeof info !== 'undefined' ? info.actionCount : null
+  };
+  spLog('INPUT', 'inputTurns=' + sp.inputRuns + ' historyType=' + action.type +
+    ' historyLength=' + action.historyLength + ' actionCount=' + sp.lastInput.actionCount);
+  spLog('INPUT', 'text=' + JSON.stringify(spBrief(resultText, 350)));
+  return { text: resultText };
+};
+modifier(text);
