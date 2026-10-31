@@ -1,5 +1,5 @@
 // ================================================================
-// SURGE PROTECTOR v1.1.0 | OUTPUT
+// SURGE PROTECTOR v1.2.0-alpha.3 | OUTPUT
 // Mode 1: diagnostics. Mode 2: advisory narration + diagnostics.
 // Release: v1.0; all four tabs use this version.
 // ================================================================

@@ -1,11 +1,11 @@
 /*
  * ================================================================
- *  SURGE PROTECTOR v1.1.0
+ *  SURGE PROTECTOR v1.2.0-alpha.3
  *  AI Dungeon Power & Spell Management Engine
  * ================================================================
  *  SCRIPT: LIBRARY (complete replacement)
- *  STATUS: v1.0 initial release; Mode 2 natural-language guidance is advisory
- *  RELEASE: v1.0 playable baseline; tier references and guarded migration
+ *  STATUS: v1.2 development; Mode 2 natural-language guidance is advisory
+ *  RELEASE: alpha.3 expanded Technokinesis and private-thought Mind Reading
  *
  *  COMMANDS:
  *    #GAME MODE 1       Explicit #ability activation (default)
@@ -20,7 +20,7 @@
  *    STORYTELLER GUIDE   spM2BuildCardGuide
  *    PLAYER DOCS         spSyncReferenceCards (zero triggers)
  *
- *  This is one of FOUR matching v1.1.0 script tabs.
+ *  This is one of FOUR matching v1.2.0-alpha.3 script tabs.
  *  Character-registered powers and limits are authoritative.
  *  Reference compendium cards cannot grant additional powers.
  *  Mode 2 candidate hints are advisory, not guaranteed enforcement.
@@ -28,9 +28,106 @@
  * ================================================================
  */
 
-const SP_VERSION = '1.1.0';
+const SP_VERSION = '1.2.0-alpha.3';
 // Internal saved-state schema; this is NOT a separate product release version.
 const SP_STATE_SCHEMA_VERSION = '0.8.4';
+
+// ============================================================================
+// BEGIN AID SCRIPTBRIDGE API ADVERTISEMENT — SURGE PROTECTOR
+// ============================================================================
+// COPY/PASTE INTEGRATION REFERENCE: This entire block is self-contained.
+// AID ScriptBridge format: 1.0-DRAFT (documentation convention, not live bus).
+// Script: Surge Protector | Script version: 1.2.0-alpha.3
+// Status: EXISTING LOCAL FUNCTIONS + PLAYER COMMANDS; CROSS-SCRIPT API PENDING.
+//
+// PURPOSE / AUTHORITY:
+//   Owns the player's registered supernatural power and spell permissions,
+//   tier descriptions, numerical caps, exclusions, and narrator guidance.
+//   Does NOT own psychological state, NPC behavior, spell slots, or sanity.
+//   References/catalog entries never grant powers without registration.
+//
+// CAPABILITIES OFFERED NOW (in this script's own Library execution scope):
+//   powers.registry.read      Inspect current registered power/spell objects.
+//   powers.registry.manage    Register, update, limit, and remove via commands.
+//   powers.activation.parse   Parse an explicit #trigger activation (Mode 1).
+//   powers.candidates.detect  Retrieve tentative Mode 2 candidates (READ-ONLY).
+//   powers.guidance.build     Build Mode 2 AI guidance (READ-ONLY, advisory).
+//   spells.catalog           Browse indexed D&D spell profiles and details.
+//   game.mode                Read or change game mode (1 or 2).
+//
+// ACCESS — IMPLEMENTED / PLAYER INPUT:
+//   #POWER ADD <preset name> <level 1-10>
+//   #POWER CUSTOM <name> <level 1-10> | <description>
+//   #POWER REMOVE <name/trigger>
+//   #POWER LIMIT <trigger> RANGE <number>ft
+//   #POWER LIMIT <trigger> MASS <number>lb
+//   #POWER LIST | DETAILS <name> | LEVELS <preset> | CATALOG
+//   #SPELL ADD <indexed name> [cast rank]
+//   #SPELL REMOVE <name/trigger>
+//   #SPELL LIST | DETAILS <name> | CATALOG [rank 0-9]
+//   #GAME MODE 1 | 2 | STATUS
+//   #GAME DOCS | #POWER HELP
+//   Player input is processed by Input -> Context -> Output; admin command
+//   replies are plain text, not structured ScriptBridge responses.
+//
+// ACCESS — IMPLEMENTED / LOCAL JAVASCRIPT (SAME EVALUATION SCOPE ONLY):
+//   const sp = spInit();                 // Creates/migrates SP state; returns it.
+//   const mode = spMode1Init(sp);        // Initializes settings/registry.
+//   const registry = mode.registry;     // Persistent, state-owned map by trigger.
+//   const cmd = spCommandParse('#POWER ADD Telekinesis 4');
+//   const reply = cmd ? spExecCommand(sp,cmd) : null;
+//   // cmd: {group:'POWER'|'SPELL'|'GAME', operation:string, args:string}
+//   // reply: human-readable OOC string. Some errors are replies, not throws.
+//   // Use spCommandParse() + spExecCommand() together for supported commands;
+//   // do not bypass registration by inserting reference cards into registry.
+//
+//   spMode1ParseInput(actionText, registry)
+//     -> {status,trigger,power,text,stripped,requestedCastLevel,castLevel}
+//        status: REGISTERED | UNKNOWN | NONE | LEVEL_DENIED
+//        Parse only; NOT a successful authorization or execution.
+//
+//   spM2FindCandidates(actionText, registry, maxResults)
+//     -> {candidates:Array, flags:Object}
+//        Tentative detection only; DOES NOT authorize a power.
+//   spM2BuildContextHints(actionText, registry, maxChars)
+//     -> {text,skipped,reason,used,candidates,omitted,coverage,...}
+//        Advisory prose for the storyteller; DOES NOT change registry.
+//
+// REGISTRY OBJECT (state.surgeProtector.mode1.registry):
+//   { "<trigger>": {id,name,trigger,catalogType:'power'|'spell',
+//       level,description,limits:Array,exclusions,caps:Object,...} }
+//   Spell entries also have baseLevel and maxCastLevel when applicable.
+//   This is INTERNAL persistent state, NOT a shared inter-script database.
+//   To register abilities safely, use the implemented command path above.
+//
+// REQUEST/RESPONSE / EVENT TRANSPORT STATUS:
+//   DISCOVER  GET /capabilities            NOT IMPLEMENTED
+//   QUERY     GET /powers                  NOT IMPLEMENTED via ScriptBridge
+//   COMMAND   POST /powers/register        NOT IMPLEMENTED via ScriptBridge
+//   COMMAND   POST /spells/register        NOT IMPLEMENTED via ScriptBridge
+//   EVENT     POST /events                 NOT IMPLEMENTED
+//   There is NO live spBridgeRequest(), external endpoint, event subscription,
+//   provider discovery, or cross-script message bus in this release.
+//   Separately installed Adventure Scripts cannot be assumed to call these
+//   Library functions or access this script's private state directly.
+//   A future adapter must verify transport, validation, authorization,
+//   version compatibility, optional peers, and retry/idempotency behavior.
+//
+// COMPATIBILITY / SAFETY:
+//   Works standalone; no MindRift or other script is required.
+//   All powers and spells must be explicitly registered by the player/scenario.
+//   Mode 1 is explicitly triggered; Mode 2 guidance remains advisory.
+//   No automatic MindRift sanity checks or external events in this version.
+//   Stable capability names and JSON envelopes are PROPOSED, not promises.
+//
+// MAINTENANCE RULE:
+//   Update this advertisement whenever implemented entry points change.
+//   Mark capabilities IMPLEMENTED only after local tests; mark cross-script
+//   transport IMPLEMENTED only after live multi-script validation.
+// ============================================================================
+// END AID SCRIPTBRIDGE API ADVERTISEMENT — SURGE PROTECTOR
+// ============================================================================
+
 
 /** Emit one diagnostic line in the existing [SP][SECTION] format. No state changes. */
 function spLog(part, message) {
@@ -101,7 +198,7 @@ function spDocCardContent(kind) {
     '#POWER HELP — quick command help.',
     '#POWER LIST — registered powers.   #SPELL LIST — registered spells.',
     '#POWER DETAILS <name/trigger> — current effect, limits and exclusions.',
-    '#POWER CATALOG — names of built-in power presets (25); reference profiles are separate.',
+    '#POWER CATALOG — names of built-in power presets (32); reference profiles are separate.',
     '#POWER LEVELS Telepathy — each level shows what it can do, caps, and exclusions.',
     'Power tier examples reflect the bound ability: different power families scale differently.',
     '#SPELL CATALOG [0-9] — spell index; optional D&D spell rank.',
@@ -529,6 +626,8 @@ function spMode1Init(sp) {
   }
   var refreshed=spRefreshCatalogDescriptions(sp.mode1.registry);
   if(refreshed)spLog('TIER DOCS','refreshed='+refreshed+' preservesCaps=true preservesCustom=true');
+  var upgraded=spRefreshAlpha3PowerDescriptions(sp.mode1.registry);
+  if(upgraded)spLog('POWER UPDATE','refreshed='+upgraded+' alpha3 descriptions; caps and custom edits preserved');
   return sp.mode1;
 }
 
@@ -1563,7 +1662,7 @@ function spMode1ContextPrompt(actionType, actionText, decision, sp, authorizatio
 
 // ---- v0.6.0 PRECOMPUTED CATALOG + PLAYER REGISTRATION ----
 // A preset is copied into persistent state; live changes to data do not retroactively edit it.
-// 25 proposed power archetypes; 100 spell index entries; Pilot spell rules profiles.
+// 32 proposed power archetypes; 100 spell index entries; Pilot spell rules profiles.
 // DO NOT treat INDEX_ONLY_NEEDS_RULE_AUDIT as an authorized spell: the registry
 // refuses registration until audited. Grouping below is for human editing.
 var SP_POWER_PRESETS = [
@@ -2141,7 +2240,595 @@ var SP_POWER_PRESETS = [
     },
     "status": "proposed_requires_playtest"
   }
-
+,
+{
+  "id": "telekinetic_shield",
+  "name": "Telekinetic Shield",
+  "trigger": "tkshield",
+  "aliases": [
+    "telekinetic shield",
+    "telekinetic shield"
+  ],
+  "effect": "Project a protective barrier of directed mental force around yourself or nearby allies.",
+  "exclusions": "No general object manipulation, independent flight, mind reading, permanent invulnerability, or automatic defense against psychic attacks.",
+  "tiers": {
+    "1": {
+      "benchmark": "Brace against a light shove or scattered debris",
+      "caps": {
+        "areaRadiusFt": 1,
+        "durationSeconds": 3
+      }
+    },
+    "2": {
+      "benchmark": "Block a deliberate punch or falling small objects",
+      "caps": {
+        "areaRadiusFt": 1,
+        "durationSeconds": 5
+      }
+    },
+    "3": {
+      "benchmark": "Deflect a thrown rock or light weapon",
+      "caps": {
+        "areaRadiusFt": 2,
+        "durationSeconds": 10
+      }
+    },
+    "4": {
+      "benchmark": "Stop ordinary melee blows over a personal shield",
+      "caps": {
+        "areaRadiusFt": 3,
+        "durationSeconds": 20
+      }
+    },
+    "5": {
+      "benchmark": "Deflect arrows and shield one nearby ally",
+      "caps": {
+        "areaRadiusFt": 5,
+        "durationSeconds": 30
+      }
+    },
+    "6": {
+      "benchmark": "Hold back sustained small-arms impacts briefly",
+      "caps": {
+        "areaRadiusFt": 8,
+        "durationSeconds": 60
+      }
+    },
+    "7": {
+      "benchmark": "Shield a small group against concentrated mundane attacks",
+      "caps": {
+        "areaRadiusFt": 15,
+        "durationSeconds": 120
+      }
+    },
+    "8": {
+      "benchmark": "Resist heavy vehicle-scale impacts or a small explosion",
+      "caps": {
+        "areaRadiusFt": 30,
+        "durationSeconds": 300
+      }
+    },
+    "9": {
+      "benchmark": "Protect a group against building-scale impacts briefly",
+      "caps": {
+        "areaRadiusFt": 60,
+        "durationSeconds": 600
+      }
+    },
+    "10": {
+      "benchmark": "Project a large powerful barrier against extreme but finite physical impacts",
+      "caps": {
+        "areaRadiusFt": 150,
+        "durationSeconds": 1800
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "mind_reading",
+  "name": "Mind Reading",
+  "trigger": "mindreading",
+  "aliases": [
+    "mind reading",
+    "mind reading"
+  ],
+  "effect": "Read private, unspoken thoughts without consent, advancing from surface thinking to concealed secrets, suppressed memories and at the highest tier subconscious knowledge the subject may not consciously know.",
+  "exclusions": "No sending messages, compelled obedience, thought implantation, memory rewriting, independent remote viewing, or facts with no trace in the subject’s mind. Access to buried memories and unconscious secrets increases after level 5; privacy, consent and ordinary willpower do not block thought reading.",
+  "tiers": {
+    "1": {
+      "benchmark": "Catch one nearby mind’s private, unspoken surface thought or immediate mental impression",
+      "caps": {
+        "rangeFt": 5,
+        "maxTargets": 1
+      }
+    },
+    "2": {
+      "benchmark": "Hear short phrases of one mind’s private inner monologue and its accompanying emotions",
+      "caps": {
+        "rangeFt": 10,
+        "maxTargets": 1
+      }
+    },
+    "3": {
+      "benchmark": "Read a continuous stream of one mind’s current, unshared surface thoughts",
+      "caps": {
+        "rangeFt": 20,
+        "maxTargets": 1
+      }
+    },
+    "4": {
+      "benchmark": "Interpret complex private internal speech, mental images and conscious intentions",
+      "caps": {
+        "rangeFt": 30,
+        "maxTargets": 1
+      }
+    },
+    "5": {
+      "benchmark": "Deliberately examine private conscious thoughts about a concealed intention, unspoken secret or hidden plan",
+      "caps": {
+        "rangeFt": 50,
+        "maxTargets": 1
+      }
+    },
+    "6": {
+      "benchmark": "Pierce deliberate mental concealment to uncover guarded secrets, evasions and the reasoning behind a lie",
+      "caps": {
+        "rangeFt": 75,
+        "maxTargets": 1
+      }
+    },
+    "7": {
+      "benchmark": "Trace closely guarded secrets into private memories, including recollections the subject is trying not to revisit",
+      "caps": {
+        "rangeFt": 100,
+        "maxTargets": 1
+      }
+    },
+    "8": {
+      "benchmark": "Explore suppressed memories, buried associations and partly unconscious motives behind deliberate secrets",
+      "caps": {
+        "rangeFt": 250,
+        "maxTargets": 1
+      }
+    },
+    "9": {
+      "benchmark": "Reveal deep subconscious patterns, repressed recollections and hidden motives across up to two minds, including insights they cannot articulate",
+      "caps": {
+        "rangeFt": 1000,
+        "maxTargets": 2
+      }
+    },
+    "10": {
+      "benchmark": "Understand up to ten minds more deeply than they understand themselves: uncover subconscious secrets, forgotten memories and motives even the subjects do not consciously know",
+      "caps": {
+        "rangeFt": 5000,
+        "maxTargets": 10
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "biokinesis",
+  "name": "Biokinesis",
+  "trigger": "biokinesis",
+  "aliases": [
+    "biokinesis",
+    "biokinesis"
+  ],
+  "effect": "Psychically regulate and restructure your own living body: healing, performance and metabolism.",
+  "exclusions": "Self only; no healing others, creature transformation, unlimited regeneration, immortality, disease creation, or permanent superpowers beyond the tier.",
+  "tiers": {
+    "1": {
+      "benchmark": "Calm your pulse and regulate breathing",
+      "caps": {
+        "durationSeconds": 10
+      }
+    },
+    "2": {
+      "benchmark": "Adjust temperature tolerance and mild fatigue responses",
+      "caps": {
+        "durationSeconds": 30
+      }
+    },
+    "3": {
+      "benchmark": "Improve balance, reflex coordination and short-term stamina modestly",
+      "caps": {
+        "durationSeconds": 60
+      }
+    },
+    "4": {
+      "benchmark": "Accelerate healing of shallow cuts and control pain",
+      "caps": {
+        "durationSeconds": 120
+      }
+    },
+    "5": {
+      "benchmark": "Temporarily improve ordinary strength, endurance or metabolism within human limits",
+      "caps": {
+        "durationSeconds": 300
+      }
+    },
+    "6": {
+      "benchmark": "Heal moderate self-inflicted injuries over minutes and control toxins in your own body",
+      "caps": {
+        "durationSeconds": 600
+      }
+    },
+    "7": {
+      "benchmark": "Reinforce tissue and heal serious but survivable wounds over hours",
+      "caps": {
+        "durationSeconds": 1800
+      }
+    },
+    "8": {
+      "benchmark": "Dramatically boost strength or reflexes and close severe wounds within minutes",
+      "caps": {
+        "durationSeconds": 3600
+      }
+    },
+    "9": {
+      "benchmark": "Regenerate substantial tissue and recover from major survivable injuries rapidly",
+      "caps": {
+        "durationSeconds": 7200
+      }
+    },
+    "10": {
+      "benchmark": "Perform extreme self-regulation, rapid healing and bounded self-adaptation without granting arbitrary creature forms",
+      "caps": {
+        "durationSeconds": 14400
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "telekinetic_flight",
+  "name": "Telekinetic Flight",
+  "trigger": "tkflight",
+  "aliases": [
+    "telekinetic flight",
+    "telekinetic flight"
+  ],
+  "effect": "Lift and propel only yourself through sustained telekinetic force, subject to speed and altitude.",
+  "exclusions": "No telekinetic lifting of external objects, general telekinesis, automatic passenger transport, protection from impacts, or immunity to altitude hazards.",
+  "tiers": {
+    "1": {
+      "benchmark": "Briefly lighten and hover inches above the ground",
+      "caps": {
+        "speedMph": 1,
+        "altitudeFt": 1
+      }
+    },
+    "2": {
+      "benchmark": "Sustain a slow hover and controlled landing",
+      "caps": {
+        "speedMph": 3,
+        "altitudeFt": 10
+      }
+    },
+    "3": {
+      "benchmark": "Rise to rooftop height at walking pace",
+      "caps": {
+        "speedMph": 5,
+        "altitudeFt": 30
+      }
+    },
+    "4": {
+      "benchmark": "Fly around a room and maneuver around obstacles",
+      "caps": {
+        "speedMph": 10,
+        "altitudeFt": 100
+      }
+    },
+    "5": {
+      "benchmark": "Cruise over short distances as fast as a bicycle",
+      "caps": {
+        "speedMph": 20,
+        "altitudeFt": 500
+      }
+    },
+    "6": {
+      "benchmark": "Fly across a neighborhood at road-traffic speed",
+      "caps": {
+        "speedMph": 40,
+        "altitudeFt": 2000
+      }
+    },
+    "7": {
+      "benchmark": "Reach high altitudes and travel at fast vehicle speeds",
+      "caps": {
+        "speedMph": 80,
+        "altitudeFt": 10000
+      }
+    },
+    "8": {
+      "benchmark": "Fly over a region at substantial subsonic speed",
+      "caps": {
+        "speedMph": 150,
+        "altitudeFt": 30000
+      }
+    },
+    "9": {
+      "benchmark": "Sustain high-speed aerial travel with limited maneuvering",
+      "caps": {
+        "speedMph": 300,
+        "altitudeFt": 50000
+      }
+    },
+    "10": {
+      "benchmark": "Fly at extraordinary but finite speed and altitude with full directional control",
+      "caps": {
+        "speedMph": 600,
+        "altitudeFt": 100000
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "magnetism",
+  "name": "Magnetism",
+  "trigger": "magnetism",
+  "aliases": [
+    "magnetism",
+    "magnetism"
+  ],
+  "effect": "Sense and manipulate magnetic fields and susceptible metals within registered mass and range.",
+  "exclusions": "No universal control of nonmagnetic materials, ordinary stone or wood, arbitrary electrical hacking, mind control, or planetary magnetic-field control without sufficient tier.",
+  "tiers": {
+    "1": {
+      "benchmark": "Move a steel paperclip with a weak magnetic tug",
+      "caps": {
+        "massLb": 0.1,
+        "rangeFt": 5
+      }
+    },
+    "2": {
+      "benchmark": "Attract or repel a handful of nails or keys",
+      "caps": {
+        "massLb": 1,
+        "rangeFt": 10
+      }
+    },
+    "3": {
+      "benchmark": "Pull a handheld ferrous tool from nearby",
+      "caps": {
+        "massLb": 5,
+        "rangeFt": 20
+      }
+    },
+    "4": {
+      "benchmark": "Deflect a small metal projectile or manipulate a metal door latch",
+      "caps": {
+        "massLb": 20,
+        "rangeFt": 30
+      }
+    },
+    "5": {
+      "benchmark": "Bend or move a heavy steel object at short range",
+      "caps": {
+        "massLb": 100,
+        "rangeFt": 50
+      }
+    },
+    "6": {
+      "benchmark": "Lift a steel motorcycle or interfere with a local magnetic mechanism",
+      "caps": {
+        "massLb": 500,
+        "rangeFt": 100
+      }
+    },
+    "7": {
+      "benchmark": "Manipulate a car-sized ferrous mass or magnetic barrier",
+      "caps": {
+        "massLb": 3000,
+        "rangeFt": 250
+      }
+    },
+    "8": {
+      "benchmark": "Control multiple heavy ferrous objects with fine precision",
+      "caps": {
+        "massLb": 20000,
+        "rangeFt": 500
+      }
+    },
+    "9": {
+      "benchmark": "Move train-car-scale magnetically responsive metal and exert broad magnetic fields",
+      "caps": {
+        "massLb": 150000,
+        "rangeFt": 1000
+      }
+    },
+    "10": {
+      "benchmark": "Manipulate enormous finite ferrous masses and large-area magnetic fields without controlling all matter",
+      "caps": {
+        "massLb": 1000000,
+        "rangeFt": 5000
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "drain",
+  "name": "Drain Powers",
+  "trigger": "drain",
+  "aliases": [
+    "drain",
+    "drain powers"
+  ],
+  "effect": "Temporarily absorb a limited amount of energy, stamina, vitality or a specifically compatible supernatural ability through direct contact.",
+  "exclusions": "No permanent theft of powers, automatic killing, unlimited energy storage, unlimited mimicry, remote draining, or copying all abilities at once. Target resistance applies.",
+  "tiers": {
+    "1": {
+      "benchmark": "Sense transferable fatigue through deliberate touch without disabling the target",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 1
+      }
+    },
+    "2": {
+      "benchmark": "Draw a trace of stamina from one consenting creature through touch",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 3
+      }
+    },
+    "3": {
+      "benchmark": "Borrow enough stamina to overcome mild fatigue briefly",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 5
+      }
+    },
+    "4": {
+      "benchmark": "Temporarily weaken a target modestly and recover limited personal energy",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 10
+      }
+    },
+    "5": {
+      "benchmark": "Drain moderate vitality or dampen one modest compatible power for seconds with resistance",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 20
+      }
+    },
+    "6": {
+      "benchmark": "Briefly borrow one bounded low-level compatible ability through touch",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 30
+      }
+    },
+    "7": {
+      "benchmark": "Absorb significant but survivable energy and mimic one compatible ability under your registered cap",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 60
+      }
+    },
+    "8": {
+      "benchmark": "Drain a powerful compatible ability temporarily without inheriting its unrelated powers",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 120
+      }
+    },
+    "9": {
+      "benchmark": "Absorb major finite energy or temporarily suppress one strong power under resistance",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 300
+      }
+    },
+    "10": {
+      "benchmark": "Channel immense but bounded energy or briefly mimic a high-tier compatible power without permanent theft",
+      "caps": {
+        "rangeFt": 0,
+        "maxTargets": 1,
+        "durationSeconds": 600
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+},
+{
+  "id": "technokinesis",
+  "name": "Technokinesis",
+  "trigger": "technokinesis",
+  "aliases": [
+    "technokinesis",
+    "technokinesis"
+  ],
+  "effect": "Psychically communicate with, read, command, diagnose and operate technology, including software, electronics and connected machinery, with sophistication increasing by tier.",
+  "exclusions": "Cannot create new physical hardware, produce unlimited electrical energy, control minds, manipulate unrelated matter, access physically disconnected networks, or guarantee defeat of all digital defenses. Device functions and tier caps still apply.",
+  "tiers": {
+    "1": {
+      "benchmark": "Sense, communicate with and operate one nearby simple powered device: check status, turn it on or off and adjust basic controls",
+      "caps": {
+        "rangeFt": 5,
+        "maxTargets": 1
+      }
+    },
+    "2": {
+      "benchmark": "Mentally navigate an ordinary electronic device, read accessible data, adjust settings and use its normal functions",
+      "caps": {
+        "rangeFt": 10,
+        "maxTargets": 1
+      }
+    },
+    "3": {
+      "benchmark": "Interface with one phone, computer, camera or electronic lock: browse files, see feeds, send commands and diagnose faults",
+      "caps": {
+        "rangeFt": 20,
+        "maxTargets": 1
+      }
+    },
+    "4": {
+      "benchmark": "Operate complex electronically controlled machinery or vehicles, reading sensors and manipulating functional subsystems",
+      "caps": {
+        "rangeFt": 30,
+        "maxTargets": 1
+      }
+    },
+    "5": {
+      "benchmark": "Interface with a local connected system, route signals, copy accessible data and attempt simple electronic access bypass",
+      "caps": {
+        "rangeFt": 50,
+        "maxTargets": 1
+      }
+    },
+    "6": {
+      "benchmark": "Coordinate two devices, interpret transmissions, override weak digital security and change accessible software settings",
+      "caps": {
+        "rangeFt": 100,
+        "maxTargets": 2
+      }
+    },
+    "7": {
+      "benchmark": "Operate three networked machines or robots, diagnose faults and attempt to bypass substantial electronic defenses",
+      "caps": {
+        "rangeFt": 250,
+        "maxTargets": 3
+      }
+    },
+    "8": {
+      "benchmark": "Control five advanced systems, rewrite operating routines, monitor local networks and attempt defended digital intrusions",
+      "caps": {
+        "rangeFt": 500,
+        "maxTargets": 5
+      }
+    },
+    "9": {
+      "benchmark": "Orchestrate twelve complex machines, disable hostile automation and overcome sophisticated but finite security measures",
+      "caps": {
+        "rangeFt": 1500,
+        "maxTargets": 12
+      }
+    },
+    "10": {
+      "benchmark": "Synchronize and reprogram up to thirty sophisticated devices across a large connected complex, challenging hardened defenses",
+      "caps": {
+        "rangeFt": 5000,
+        "maxTargets": 30
+      }
+    }
+  },
+  "status": "proposed_requires_playtest"
+}
 ];
 var SP_SPELL_INDEX = [
   // ===== SPELL RANK 0 — CANTRIPS =====
@@ -3034,7 +3721,7 @@ SP_SPELL_COMPLETE_PROFILES.forEach(function(profile){
    .forEach(function(k){item[k]=profile[k];});
 });
 
-var SP_CATALOG_VERSION = '1.1.0';
+var SP_CATALOG_VERSION = '1.2.0-alpha.3';
 
 /** Normalize display names to compact case-insensitive registry/lookup keys. */
 function spKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -3170,7 +3857,14 @@ var SP_POWER_CORE_FUNCTIONS = {
   "force_fields": "Create and sustain protective force barriers against the category of impact this tier allows",
   "energy_projection": "Emit focused bursts or beams of the registered energy type at this tier’s permitted strength",
   "summoning": "Conjure size-dependent numbers of temporary allies, from Tiny helpers to finite magical creatures within this tier’s categories",
-  "time_manipulation": "Alter the local or subjective rate of time only to the degree, area, and duration this tier allows"
+  "time_manipulation": "Alter the local or subjective rate of time only to the degree, area, and duration this tier allows",
+  "telekinetic_shield": "Project a protective barrier of directed mental force around yourself or nearby allies",
+  "mind_reading": "Read private thoughts without permission; from level 6 increasingly uncover hidden secrets, suppressed memories and unconscious knowledge by tier",
+  "biokinesis": "Psychically regulate and restructure your own living body: healing, performance and metabolism",
+  "telekinetic_flight": "Lift and propel only yourself through sustained telekinetic force, subject to speed and altitude",
+  "magnetism": "Sense and manipulate magnetic fields and susceptible metals within registered mass and range",
+  "drain": "Temporarily absorb a limited amount of energy, stamina, vitality or a specifically compatible supernatural ability through direct contact",
+  "technokinesis": "Mentally communicate with and operate technology, read data, issue electronic commands and at higher levels influence connected systems and security within tier limits"
 };
 
 /** One complete level sentence: functional verbs + the known tier benchmark.
@@ -3216,7 +3910,7 @@ function spPowerFromPreset(preset, level) {
     id:preset.trigger, name:preset.name, kind:preset.id.toUpperCase().replace(/-/g,'_'),
     level:level, catalogType:'power', catalogId:preset.id, catalogVersion:SP_CATALOG_VERSION,
     status:'PROPOSED_CALIBRATION', trigger:preset.trigger,
-    description:preset.effect + ' Level ' + level + ': ' + (['telepathy','regeneration','illusion','shapeshifting','summoning'].indexOf(preset.id)>=0 ? spPowerTierDescription(preset,level) : tier.benchmark.replace(/\s*\(conservative interim tier; numeric limits interpolated where possible\)/gi,'')),
+    description:preset.effect + ' Level ' + level + ': ' + (['telepathy','regeneration','illusion','shapeshifting','summoning','mind_reading','technokinesis'].indexOf(preset.id)>=0 ? spPowerTierDescription(preset,level) : tier.benchmark.replace(/\s*\(conservative interim tier; numeric limits interpolated where possible\)/gi,'')),
     exclusions:preset.exclusions,
     limits:spCapStrings(caps).concat(['No unregistered effects; absent caps are NOT unlimited.']),
     caps:caps
@@ -3403,6 +4097,43 @@ function spRefreshCatalogDescriptions(registry) {
   return updates;
 }
 
+/** alpha.3: refresh only intact stock registrations of the two revised presets.
+ * Never modify custom descriptions, player-adjusted caps/limits or other powers.
+ * Idempotent on subsequent runs and when a player registers the new preset. */
+function spRefreshAlpha3PowerDescriptions(registry) {
+  if (!registry || typeof registry!=='object') return 0;
+  var legacyBenchmarks={
+    mind_reading: ["Sense broad emotions from one willing nearby mind", "Discern obvious surface feelings from one willing subject", "Hear a willing subject’s current surface thoughts", "Interpret complex consenting surface thoughts", "Attempt surface-thought reading of one unwilling target subject to resistance", "Follow a deeper current thought stream if resistance fails", "Probe recent recollections of one resisting target after overcoming defenses", "Search intricate private mental associations with resistance checks", "Probe several distinct minds while respecting individual resistance", "Explore a broad network of accessible minds without guaranteed secret or memory access"],
+    technokinesis: ["Sense when a nearby simple powered device is active", "Read simple device status and toggle an accessible switch mentally", "Send basic commands to one compatible device with normal access permissions", "Operate ordinary powered machinery and interpret simple diagnostics", "Communicate with local computers or devices using their available functions and access", "Coordinate multiple nearby compatible devices and troubleshoot software states", "Operate complex machinery or limited local networks subject to permissions and defenses", "Interface rapidly with advanced systems and attempt limited defended access where allowed", "Coordinate numerous sophisticated machines within range subject to system defenses", "Communicate with and orchestrate vast but finite complex networks without universal omnipotence"]
+  };
+  var legacyTechEffect="Psychically sense, communicate with and operate compatible technology through its existing interfaces and functions.";
+  var count=0;
+  ['mindreading','technokinesis'].forEach(function(key){
+    var p=registry[key], id=key==='mindreading'?'mind_reading':'technokinesis';
+    if(!p || p.catalogType!=='power' || p.catalogId!==id ||
+       p.name!==(id==='mind_reading'?'Mind Reading':'Technokinesis') ||
+       !Number.isInteger(p.level) || p.level<1 || p.level>10 ||
+       ['1.2.0-alpha.1','1.2.0-alpha.2'].indexOf(p.catalogVersion)<0) return;
+    var preset=spFindPreset(SP_POWER_PRESETS,id);
+    var oldTier=legacyBenchmarks[id][p.level-1];
+    var oldDescriptionPrefix=id==='mind_reading'
+      ? 'Perceive thoughts and emotions in another mind,'
+      : legacyTechEffect;
+    if(!String(p.description||'').startsWith(oldDescriptionPrefix) ||
+       !String(p.description||'').endsWith(' Level '+p.level+': '+oldTier))return;
+    // Do not erase a user's rewritten exclusion rules.
+    var oldExclusions=id==='mind_reading'
+      ? 'No sending telepathic messages, compelled obedience, memory rewriting, implanted thoughts, or automatic access to sealed minds.'
+      : 'No creation of new hardware, universal network access, bypassing all security, unrelated electrical attacks, transmutation, or guaranteed control of alien or unpowered devices.';
+    if(p.exclusions!==oldExclusions) return;
+    p.description=preset.effect+' Level '+p.level+': '+spPowerTierDescription(preset,p.level);
+    p.exclusions=preset.exclusions;
+    p.catalogVersion=SP_CATALOG_VERSION;
+    count++;
+  });
+  return count;
+}
+
 /** Execute one management command and return OOC response. Only this mutates the registry via ADD/CUSTOM/LIMIT/REMOVE. */
 function spExecCommand(sp, command) {
   var registry=sp.mode1.registry, args=command.args;
@@ -3466,7 +4197,7 @@ function spExecCommand(sp, command) {
     if(command.group==='POWER') {
       var single=args?spFindPreset(SP_POWER_PRESETS,args):null;
       if(single)return fail(spPowerLevelsText(single));
-      return fail('Power catalog (25): '+SP_POWER_PRESETS.map(function(p){return p.name;}).join(', ')+
+      return fail('Power catalog (32): '+SP_POWER_PRESETS.map(function(p){return p.name;}).join(', ')+
         '. Preview ten levels with #POWER LEVELS Telepathy (or #POWER CATALOG Telepathy). Register with #POWER ADD Name Level or #POWER CUSTOM Name Level | Description.');
     }
     var rankText = args.trim();
@@ -3999,6 +4730,7 @@ var SP_M2_REFERENCE_CARDS = {
 // M2-16 — Common-ability coverage: catalog-backed, READ-ONLY reference profiles.
 // These cards never register a power or change its tier. Existing curated cards win.
 var SP_M2_COMMON_POWER_REFERENCES = [{"schemaVersion":1,"id":"telepathy","type":"power","name":"Telepathy","aliases":["telepathy"],"family":"mental_communication","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Receive or transmit thoughts from a mind, subject to resistance and target awareness limits.","ordinary":"Send words or impressions to a mind and receive voluntary responses within registered range/target limits; private-thought probing is a separate resistance-gated use.","boundary":"No telekinesis, mind control, memory alteration, or remote viewing. Sending a thought does not require permission to read private thoughts and never grants forced obedience, memory rewriting, remote viewing or object manipulation."},"structured":{"effects":["thought_exchange"],"actions":["speak"],"mechanisms":["mental_communication"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["with my mind","through my thoughts","into his mind","into her mind","into their minds","mind to mind","mentally","telepathically","silent mental message"],"supporting":["speak","tell","say","send","whisper","communicate","converse","message","thoughts","listen","read","hear","answer","reply"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"electrokinesis","type":"power","name":"Electrokinesis","aliases":["electrokinesis"],"family":"electrical_energy","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Generate or redirect electrical discharge and currents.","ordinary":"Create or redirect bounded electrical current and discharges as registered.","boundary":"No mind reading, technology control without an electrical mechanism, or universal EMP immunity. Electric control does not imply immunity, fire control or authority over unrelated technology."},"structured":{"effects":["electric_discharge"],"actions":["shock"],"mechanisms":["electrical_energy"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["electrically","electricity","electrical energy","static electricity","with a current","electrokinesis","lightning from my hand"],"supporting":["shock","arc","spark","discharge","bolt","power","electrify","conduct","current","device"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"hydrokinesis","type":"power","name":"Hydrokinesis","aliases":["hydrokinesis"],"family":"water_control","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Move and shape existing liquid water.","ordinary":"Move or shape existing liquid water within defined volume, range and intensity.","boundary":"No conjuring unlimited water, controlling blood inside bodies, ice creation, or weather control. Moving water does not grant ice creation, breathing underwater, weather control or water generation."},"structured":{"effects":["water_manipulation"],"actions":["water"],"mechanisms":["water_control"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["with water magic","hydrokinesis","command the water","control the water","bend the water","with my will","using my power"],"supporting":["water","stream","puddle","river","liquid","flow","wave","droplets","pour","shape","lift"]},"constraintDimensions":["rangeFt","volumeGallons"]},{"schemaVersion":1,"id":"aerokinesis","type":"power","name":"Aerokinesis","aliases":["aerokinesis"],"family":"air_control","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Control moving air and local wind pressure.","ordinary":"Shape or propel nearby air and wind within the registered pressure and range.","boundary":"No vacuum survival, atmospheric transmutation, or weather change by default. Controlling air does not automatically grant flight, vacuum survival or weather control."},"structured":{"effects":["wind_manipulation"],"actions":["wind"],"mechanisms":["air_control"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["air magic","wind magic","aerokinesis","command the wind","shape the air","with my power"],"supporting":["wind","gust","air","breeze","push","blow","pressure","draft"]},"constraintDimensions":["rangeFt","areaRadiusFt"]},{"schemaVersion":1,"id":"geokinesis","type":"power","name":"Geokinesis","aliases":["geokinesis"],"family":"earth_control","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Move and shape loose earth and stone.","ordinary":"Move and reshape the loose earth or stone permitted by the registered level.","boundary":"No metal control, mass creation, tectonic planet destruction, or automatic flight. No automatic control over metal, internal organs, unlimited earthquakes or remote teleportation."},"structured":{"effects":["earth_manipulation"],"actions":["earth"],"mechanisms":["earth_control"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["earth magic","stone magic","geokinesis","command the earth","bend the stone","with my power"],"supporting":["earth","stone","rock","dirt","soil","sand","ground","boulder","shape","raise"]},"constraintDimensions":["rangeFt","massLb"]},{"schemaVersion":1,"id":"flight","type":"power","name":"Flight","aliases":["flight"],"family":"aerial_movement","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Propel and maneuver the user through air.","ordinary":"Propel and maneuver the user through open air within registered speed and altitude.","boundary":"No teleportation, space travel, air control, or protection from cold/low oxygen. Flight does not imply teleportation, super speed, invulnerability or independent wind control."},"structured":{"effects":["self_flight"],"actions":["air"],"mechanisms":["aerial_movement"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["magically fly","with my flight power","with flight","take flight","lift myself","fly","flying","soar","hover"],"supporting":["air","sky","ground","upward","above","over","through","float","rise","ceiling","roof","wings"]},"constraintDimensions":["speedMph","altitudeFt"]},{"schemaVersion":1,"id":"teleportation","type":"power","name":"Teleportation","aliases":["teleportation"],"family":"spatial_movement","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Instantly relocate the user between positions subject to destination rules.","ordinary":"Instantly relocate within registered destination, visibility, range and frequency rules.","boundary":"No time travel, remote scouting, telekinesis, or transporting others unless expressly allowed. Teleportation does not grant flight, phasing, portals or transporting others unless stated."},"structured":{"effects":["self_teleportation"],"actions":["across"],"mechanisms":["spatial_movement"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["teleport","blink","instantly reappear","vanish and reappear","step through space","spatial jump","transport myself"],"supporting":["across","room","door","behind","other side","spot","position","location","distance","feet","destination"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"super_strength","type":"power","name":"Super Strength","aliases":["super strength","superstrength"],"family":"enhanced_body","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Apply amplified bodily strength through muscles and leverage.","ordinary":"Use the registered level of enhanced physical muscle power and leverage.","boundary":"No telekinesis, invulnerability, supernatural flight, or immunity to recoil. Strength does not grant invulnerability, flight, telekinesis or supernatural speed."},"structured":{"effects":["extraordinary_strength"],"actions":["lift"],"mechanisms":["enhanced_body"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["super strength","superhuman strength","enhanced strength","with incredible strength","using my strength","with raw power"],"supporting":["lift","bend","break","carry","rip","push","pull","punch","tear","crush","heavy"]},"constraintDimensions":["massLb"]},{"schemaVersion":1,"id":"super_speed","type":"power","name":"Super Speed","aliases":["super speed","superspeed"],"family":"enhanced_body_speed","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Move bodily at extraordinary speed while remaining physically present.","ordinary":"Move physically at registered extraordinary speed, respecting control and physical presence.","boundary":"No teleportation, time stop, phase shifting, or automatic invulnerability. Speed does not grant time travel, teleportation, durability or flight."},"structured":{"effects":["extraordinary_speed"],"actions":["run"],"mechanisms":["enhanced_body_speed"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["super speed","superhuman speed","at super speed","with incredible speed","faster than the eye","speedster"],"supporting":["run","dash","sprint","move","dodge","race","circle","rush","fast"]},"constraintDimensions":["speedMph"]},{"schemaVersion":1,"id":"regeneration","type":"power","name":"Regeneration","aliases":["regeneration"],"family":"self_repair","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Automatically heal the user’s own injuries; never heals other people.","ordinary":"Passive automatic healing of the registered user only, with recovery time and injury severity determined by tier; high tiers regrow limbs.","boundary":"Self only; never heals another person. No resurrection after confirmed death, magical invulnerability, unconditional poison or disease immunity, or survival of total bodily destruction."},"structured":{"effects":["self_regeneration"],"actions":["wounds"],"mechanisms":["self_repair"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["regenerate","regeneration","my wounds knit","my flesh heals","heal myself","my body heals","regrow","my wounds knit shut","regrow my arm","my cuts close on their own"],"supporting":["wounds","cut","skin","bones","injury","limb","tissue","damage","blood","regrow","self-heal","automatically"]},"constraintDimensions":["severityRank"]},{"schemaVersion":1,"id":"healing","type":"power","name":"Healing","aliases":["healing"],"family":"restorative_magic","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Restore injury or illness in a touched or nearby living target.","ordinary":"Heal a permitted living target at the registered injury severity and distance.","boundary":"No resurrection, rewriting minds, age reversal, or creating organisms unless expressly listed. Healing does not imply resurrection, unrestricted regeneration, curing all illness or mind control."},"structured":{"effects":["other_healing"],"actions":["wound"],"mechanisms":["restorative_magic"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["healing touch","healing magic","healing energy","channel healing","restore her health","mend his injuries","heal"],"supporting":["wound","cut","injury","bruise","broken","body","person","warrior","patient","ally","target","them","him","her"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"invulnerability","type":"power","name":"Invulnerability","aliases":["invulnerability"],"family":"damage_resistance","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Resist physical harm up to the defined class of threats.","ordinary":"Resist the specified damage types and severity while active.","boundary":"No immunity to mind control, suffocation, aging, or all attacks without specification. Damage resistance does not imply immunity to every attack, healing or force-field projection."},"structured":{"effects":["resist_damage"],"actions":["impact"],"mechanisms":["damage_resistance"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["invulnerability","invulnerable","impervious","super tough","harden my body","make myself bulletproof","toughen my skin"],"supporting":["impact","attack","blow","punch","sword","bullet","damage","strike","hit","weapon"]},"constraintDimensions":[]},{"schemaVersion":1,"id":"invisibility","type":"power","name":"Invisibility","aliases":["invisibility"],"family":"visual_concealment","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Conceal the user from ordinary vision while active.","ordinary":"Conceal the user from ordinary sight within registered movement/duration rules.","boundary":"No intangibility, silence, odor masking, thermal masking, or memory erasure by default. Invisibility does not imply silence, intangibility, mind control or teleportation."},"structured":{"effects":["self_invisibility"],"actions":["guards"],"mechanisms":["visual_concealment"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["turn invisible","become invisible","make myself invisible","fade from sight","vanish from sight","be unseen","disappear from view"],"supporting":["guards","watchers","eyes","sight","vision","body","seen","hide","view","invisible"]},"constraintDimensions":["durationSeconds","maxTargets"]},{"schemaVersion":1,"id":"illusion","type":"power","name":"Illusion","aliases":["illusion"],"family":"sensory_illusion","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Create paired visual and auditory illusions from Level 1, expanding their scale, complexity, and available sensory modalities at higher tiers.","ordinary":"Create audible and visible illusions from Level 1, adding smell, tactile impressions, temperature sensations and taste only at their defined tiers.","boundary":"Illusions are nonphysical: no direct damage, real heat or cold, solid barriers, mind control, material transformation, or guaranteed deception. Additional senses unlock only at the described levels."},"structured":{"effects":["false_sensory_impression"],"actions":["image"],"mechanisms":["sensory_illusion"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["illusion","illusory","fake image","phantom image","false image","conjure an image","make him see","project an image","make an illusory sound and image","create an image with sound"],"supporting":["image","sound","figure","wall","door","phantom","appearance","scene","noise","sight","smell","touch","taste","temperature","voices"]},"constraintDimensions":["rangeFt","areaRadiusFt"]},{"schemaVersion":1,"id":"shapeshifting","type":"power","name":"Shapeshifting","aliases":["shapeshifting"],"family":"physical_transformation","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Alter your own physical form; permitted bodily anatomy and natural senses follow an authorized form.","ordinary":"Change your own body according to level: limbs at 2; impersonation at 3; comparable humanoids at 4; mundane beasts at 5–9; colossal magical creatures with finite innate form traits only at 10.","boundary":"Self-transformation only; one body and form at a time. No copied memories, skills, identities, permanent power theft or transformation of other creatures. Ordinary forms grant ordinary anatomy and senses; innate finite magical creature traits require Level 10. No arbitrary spellcasting or unlimited divine powers."},"structured":{"effects":["self_transformation"],"actions":["wolf"],"mechanisms":["physical_transformation"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["shapeshift","shape shift","transform","morph","change my body","change form","turn into","become a","take the form of","reshape my arms","change my face to match","grow claws"],"supporting":["wolf","dog","cat","hawk","bird","eagle","bear","snake","animal","creature","beast","person","form","body","limbs","claws","face","humanoid","dragon"]},"constraintDimensions":["maxForms"]},{"schemaVersion":1,"id":"phasing","type":"power","name":"Phasing","aliases":["phasing"],"family":"intangibility","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Temporarily pass one’s body through ordinary solid matter.","ordinary":"Move body parts or the body through permitted solid materials within the registered duration.","boundary":"No teleportation, invisibility, remote interaction, or automatic ability to phase other people. Phasing does not grant invisibility, teleportation, flight or immunity when solid."},"structured":{"effects":["pass_through_matter"],"actions":["wall"],"mechanisms":["intangibility"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["phase","phase through","turn intangible","become intangible","pass through","ghost through","make my body insubstantial"],"supporting":["wall","door","floor","stone","solid","barrier","object","matter","metal"]},"constraintDimensions":["thicknessFt"]},{"schemaVersion":1,"id":"precognition","type":"power","name":"Precognition","aliases":["precognition"],"family":"future_perception","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Perceive conditional glimpses of possible future events.","ordinary":"Perceive short, conditional future possibilities within the registered lookahead.","boundary":"No certainty about free choices, omniscience, mind control, or time travel. Possible glimpses are not certainty, time travel, mind reading or omniscience."},"structured":{"effects":["future_glimpse"],"actions":["future"],"mechanisms":["future_perception"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["precognition","precognitive","foresee","look into the future","glimpse the future","see the future","future sight","look ahead in time"],"supporting":["future","next","soon","ahead","seconds","moment","danger","happen","attack","event","outcome"]},"constraintDimensions":["lookaheadSeconds"]},{"schemaVersion":1,"id":"mind_control","type":"power","name":"Mind Control","aliases":["mind control","mindcontrol"],"family":"mental_influence","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Influence a resisting target’s decisions within a defined command scope.","ordinary":"Attempt influence within the registered scope; target resistance and setting safeguards remain applicable.","boundary":"No reading private memories, altering physiology, or controlling everyone automatically. No automatic full personality rewrite, memory alteration, guaranteed obedience or unlimited targets."},"structured":{"effects":["compelled_choice"],"actions":["obey"],"mechanisms":["mental_influence"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["mind control","mentally compel","psychic suggestion","plant a suggestion","influence his mind","compel her mind"],"supporting":["obey","suggest","command","choice","decision","follow","influence","resist","compliance","order"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"force_fields","type":"power","name":"Force Fields","aliases":["force fields","forcefields"],"family":"protective_barrier","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Create a barrier of force that impedes physical impacts.","ordinary":"Project a bounded barrier that resists the registered types and magnitude of impact.","boundary":"No attacks, imprisoning creatures, mind shielding, or oxygen generation unless listed. Protection does not imply invisibility, invulnerability, remote telekinesis or offense."},"structured":{"effects":["force_barrier"],"actions":["block"],"mechanisms":["protective_barrier"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["force field","forcefield","energy barrier","invisible barrier","protective bubble","shield of force","magical barrier"],"supporting":["block","deflect","protect","stop","arrows","sword","attack","wall","projectile","shield"]},"constraintDimensions":["areaRadiusFt","durationSeconds"]},{"schemaVersion":1,"id":"energy_projection","type":"power","name":"Energy Projection","aliases":["energy projection","energyprojection"],"family":"energy_attack","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Emit a focused damaging beam or burst of selected energy type.","ordinary":"Emit the specified bounded energy burst or beam within registered type and strength.","boundary":"No teleportation, remote sensing, healing, or unrelated elemental control. An energy attack does not grant immunity, every energy type, force fields or flight."},"structured":{"effects":["energy_burst"],"actions":["energy"],"mechanisms":["energy_attack"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["energy blast","energy beam","energy projection","fire a beam","project a bolt","shoot a blast","emit a beam"],"supporting":["energy","blast","beam","bolt","target","enemy","attack","hand","palm","burst"]},"constraintDimensions":["rangeFt","areaRadiusFt"]},{"schemaVersion":1,"id":"summoning","type":"power","name":"Summoning","aliases":["summoning"],"family":"creature_summoning","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Conjure a limited number of bounded, autonomous allied beings.","ordinary":"Call the permitted number, size and type of allied creature at registered range and duration.","boundary":"No creating arbitrary godlike beings, stealing NPC free will, permanent resurrection, or unlimited duration. Summoning does not grant arbitrary creature abilities, permanent unlimited armies or mind control of others."},"structured":{"effects":["conjured_creature"],"actions":["creature"],"mechanisms":["creature_summoning"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["summon","conjure a creature","call forth a creature","magically call","summoning ritual"],"supporting":["creature","animal","spirit","ally","beast","familiar","servant","wolf","companion","minion"]},"constraintDimensions":["maxTargets","durationSeconds"]},{"schemaVersion":1,"id":"time_manipulation","type":"power","name":"Time Manipulation","aliases":["time manipulation","timemanipulation"],"family":"temporal_effect","reviewStatus":"curated_reference","provenance":"Surge Protector common-power reference generated from existing catalog; only the registered tier grants abilities.","narrative":{"definition":"Alter the subjective flow of time in a local, bounded fashion.","ordinary":"Modify subjective/local time within the registered area and duration.","boundary":"No traveling to past, rewriting history, reversing death, or changing causality unless explicitly approved. No automatic time travel, retroactive changes or unbounded permanent time stop."},"structured":{"effects":["time_shift"],"actions":["clock"],"mechanisms":["temporal_effect"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["slow time","speed up time","freeze time","alter time","time manipulation","bend time","briefly accelerate time"],"supporting":["clock","moment","seconds","minutes","around","room","myself","others","flow","time"]},"constraintDimensions":["areaRadiusFt","durationSeconds"]}];
+SP_M2_COMMON_POWER_REFERENCES = SP_M2_COMMON_POWER_REFERENCES.concat([{"schemaVersion":1,"id":"telekinetic_shield","type":"power","name":"Telekinetic Shield","aliases":["telekinetic shield"],"family":"shield_area","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Project a protective barrier of directed mental force around yourself or nearby allies.","ordinary":"Attempt the described telekinetic shield effect only to the registered tier; allow natural permitted uses.","boundary":"No general object manipulation, independent flight, mind reading, permanent invulnerability, or automatic defense against psychic attacks."},"structured":{"effects":["shield_area"],"actions":["shield","block"],"mechanisms":["shield_area"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["with mental force","telekinetic shield","psychic barrier","mental barrier","shield with my mind","force with my mind"],"supporting":["shield","block","deflect","protect","intercept","barrier","projectiles","attack"]},"constraintDimensions":["areaRadiusFt","durationSeconds"]},{"schemaVersion":1,"id":"mind_reading","type":"power","name":"Mind Reading","aliases":["mind reading"],"family":"mind_perception","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Read private, unspoken thoughts without consent, advancing from surface thinking to concealed secrets, suppressed memories and at the highest tier subconscious knowledge the subject may not consciously know.","ordinary":"Detect another person’s private, unspoken thoughts without their knowledge or agreement, up to the registered depth and target count.","boundary":"No sending messages, compelled obedience, thought implantation, memory rewriting, independent remote viewing, or facts with no trace in the subject’s mind. Access to buried memories and unconscious secrets increases after level 5; privacy, consent and ordinary willpower do not block thought reading."},"structured":{"effects":["mind_perception"],"actions":["read","listen"],"mechanisms":["mind_perception"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["read his mind","read her mind","read their minds","read thoughts","mind reading","listen to thoughts","sense his thoughts","probe his mind","read the guard’s private thoughts","read secret thoughts","overhear his inner monologue","peek into her mind","read the officer’s mind","scan their private thoughts","probe her subconscious with my mind","read his buried secrets","read her forgotten memories psychically","peer into his unconscious mind","read what she does not know about herself"],"supporting":["read","listen","sense","probe","thoughts","memory","mind","feelings","secret","private","unspoken","inner monologue","subconscious","unconscious","buried","forgotten","repressed","hidden motive"]},"constraintDimensions":["rangeFt","maxTargets"]},{"schemaVersion":1,"id":"biokinesis","type":"power","name":"Biokinesis","aliases":["biokinesis"],"family":"body_control","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Psychically regulate and restructure your own living body: healing, performance and metabolism.","ordinary":"Attempt the described biokinesis effect only to the registered tier; allow natural permitted uses.","boundary":"Self only; no healing others, creature transformation, unlimited regeneration, immortality, disease creation, or permanent superpowers beyond the tier."},"structured":{"effects":["body_control"],"actions":["heal","metabolism"],"mechanisms":["body_control"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["biokinesis","with control of my cells","alter my metabolism","regulate my heartbeat","accelerate my healing","psychically heal myself"],"supporting":["heal","metabolism","cells","regulate","strengthen","adapt","reflexes","stamina","pulse","wounds"]},"constraintDimensions":["durationSeconds"]},{"schemaVersion":1,"id":"telekinetic_flight","type":"power","name":"Telekinetic Flight","aliases":["telekinetic flight"],"family":"self_flight","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Lift and propel only yourself through sustained telekinetic force, subject to speed and altitude.","ordinary":"Attempt the described telekinetic flight effect only to the registered tier; allow natural permitted uses.","boundary":"No telekinetic lifting of external objects, general telekinesis, automatic passenger transport, protection from impacts, or immunity to altitude hazards."},"structured":{"effects":["self_flight"],"actions":["fly","hover"],"mechanisms":["self_flight"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["levitate myself with my mind","fly using telekinesis","telekinetic flight","lift myself with psychic force","propel myself mentally"],"supporting":["fly","hover","levitate","soar","ascend","descend","rise","float","move"]},"constraintDimensions":["speedMph","altitudeFt"]},{"schemaVersion":1,"id":"magnetism","type":"power","name":"Magnetism","aliases":["magnetism"],"family":"magnetic_control","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Sense and manipulate magnetic fields and susceptible metals within registered mass and range.","ordinary":"Attempt the described magnetism effect only to the registered tier; allow natural permitted uses.","boundary":"No universal control of nonmagnetic materials, ordinary stone or wood, arbitrary electrical hacking, mind control, or planetary magnetic-field control without sufficient tier."},"structured":{"effects":["magnetic_control"],"actions":["steel","iron"],"mechanisms":["magnetic_control"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["magnetism","magnetic field","magnetically","control metal","bend the metal","magnetic force","attract metal","repel metal"],"supporting":["steel","iron","ferrous","metal","magnet","attract","repel","bend","pull","move","shield"]},"constraintDimensions":["massLb","rangeFt"]},{"schemaVersion":1,"id":"drain","type":"power","name":"Drain Powers","aliases":["drain powers","drain"],"family":"energy_absorption","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Temporarily absorb a limited amount of energy, stamina, vitality or a specifically compatible supernatural ability through direct contact.","ordinary":"Attempt the described drain powers effect only to the registered tier; allow natural permitted uses.","boundary":"No permanent theft of powers, automatic killing, unlimited energy storage, unlimited mimicry, remote draining, or copying all abilities at once. Target resistance applies."},"structured":{"effects":["energy_absorption"],"actions":["drain","absorb"],"mechanisms":["energy_absorption"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["drain powers","drain his energy","drain her strength","absorb their power","steal his powers","siphon vitality","absorb life force","touch and drain"],"supporting":["drain","absorb","siphon","weaken","touch","energy","stamina","strength","power","vitality"]},"constraintDimensions":["rangeFt","maxTargets","durationSeconds"]},{"schemaVersion":1,"id":"technokinesis","type":"power","name":"Technokinesis","aliases":["technokinesis"],"family":"technology_interface","reviewStatus":"curated_reference","provenance":"Surge Protector proposed tier calibrations; registry and limitations remain authoritative.","narrative":{"definition":"Psychically communicate with, read, command, diagnose and operate technology, including software, electronics and connected machinery, with sophistication increasing by tier.","ordinary":"Mentally read and operate devices starting at level 1, with control of computers, software, cameras, robots and complex systems expanding by tier.","boundary":"Cannot create new physical hardware, produce unlimited electrical energy, control minds, manipulate unrelated matter, access physically disconnected networks, or guarantee defeat of all digital defenses. Device functions and tier caps still apply."},"structured":{"effects":["technology_interface"],"actions":["computer","machine"],"mechanisms":["technology_interface"],"nonImplied":["unregistered_powers"]},"identification":{"strong":["technokinesis","talk to the computer with my mind","communicate with the machine","mentally interface","psychically control the robot","speak to the computer","interface with my mind","mentally operate the phone","mentally access the computer","read its data with my mind","psychically open the electronic lock","control cameras with my mind","hack it with technokinesis","mentally control the drone","mentally interface with the phone","technopathically","with my technopathy","use my mind to control the machine"],"supporting":["computer","machine","robot","device","technology","interface","control","operate","communicate","diagnose","diagnostics","read","hack","phone","camera","electronic lock","drone","network","data","software","sensor","signal","screen","transmission","server","menu"]},"constraintDimensions":["rangeFt","maxTargets"]}]);
 SP_M2_COMMON_POWER_REFERENCES.forEach(function(card){
   if (!Object.prototype.hasOwnProperty.call(SP_M2_REFERENCE_CARDS,card.id))
     SP_M2_REFERENCE_CARDS[card.id]=card;
@@ -4016,7 +4748,7 @@ SP_M2_REFERENCE_CARDS.telepathy.identification.strong.push('using my mind');
 
 // Distinctive player-action phrases for low-confidence natural-language retrieval.
 // They are possible candidates only when that exact power is ALREADY registered.
-var SP_M2_COMMON_SIGNATURES = {"telepathy":["speak into his thoughts","speak into her thoughts","speak into their minds","say into her mind","say into his mind","say into the woman’s mind","say into the woman's mind","say into the guard’s mind","say into the guard's mind","send a mental message","send a silent message","speak with my mind","telepathically communicate","hear his thoughts","hear her thoughts"],"electrokinesis":["shoot lightning","fire a lightning bolt","send a jolt of electricity"],"hydrokinesis":["bend the water","raise a wave of water","shape the water into"],"aerokinesis":["summon a gust of wind","bend the wind"],"geokinesis":["raise a wall of stone","bend the earth beneath"],"flight":["take flight","fly into the air","fly above the ground","hover in midair","soar above the"],"teleportation":["teleport across","blink behind","vanish and reappear","instantaneously appear behind"],"super_strength":["bend a steel bar with my hands","lift the car over my head","tear the door off its hinges"],"super_speed":["run faster than a car","move in a blur of speed","dash at superhuman speed"],"regeneration":["my wounds knit shut","my flesh knits together","regenerate my injuries"],"healing":["lay hands on his wound to heal","heal the injured person","channel healing into the wound"],"invulnerability":["let the blade bounce off my skin","harden my skin against the blow"],"invisibility":["turn invisible","become invisible","fade from sight","vanish from sight","disappear from view"],"illusion":["project an illusion of a","make the guard see an illusion","conjure an illusory image"],"shapeshifting":["turn into a wolf","turn into a hawk","turn into a cat","transform into a wolf","transform into a bird","become a wolf","take the form of a wolf","take the shape of a bear"],"phasing":["phase through the wall","walk through the solid wall","become intangible and pass through"],"precognition":["glimpse what will happen next","see a few seconds into the future","look ten seconds ahead"],"mind_control":["plant a psychic suggestion","mentally compel him to obey"],"force_fields":["raise a force field","conjure a shield of force","raise an invisible barrier against the arrows"],"energy_projection":["fire an energy beam from my hands","shoot a blast of energy","project an energy bolt"],"summoning":["summon a spirit to aid me","conjure a creature beside me","call forth a magical ally"],"time_manipulation":["slow time around me","speed up time for myself","freeze time for a moment"]};
+var SP_M2_COMMON_SIGNATURES = {"telepathy":["speak into his thoughts","speak into her thoughts","speak into their minds","say into her mind","say into his mind","say into the woman’s mind","say into the woman's mind","say into the guard’s mind","say into the guard's mind","send a mental message","send a silent message","speak with my mind","telepathically communicate","hear his thoughts","hear her thoughts"],"electrokinesis":["shoot lightning","fire a lightning bolt","send a jolt of electricity"],"hydrokinesis":["bend the water","raise a wave of water","shape the water into"],"aerokinesis":["summon a gust of wind","bend the wind"],"geokinesis":["raise a wall of stone","bend the earth beneath"],"flight":["take flight","fly into the air","fly above the ground","hover in midair","soar above the"],"teleportation":["teleport across","blink behind","vanish and reappear","instantaneously appear behind"],"super_strength":["bend a steel bar with my hands","lift the car over my head","tear the door off its hinges"],"super_speed":["run faster than a car","move in a blur of speed","dash at superhuman speed"],"regeneration":["my wounds knit shut","my flesh knits together","regenerate my injuries"],"healing":["lay hands on his wound to heal","heal the injured person","channel healing into the wound"],"invulnerability":["let the blade bounce off my skin","harden my skin against the blow"],"invisibility":["turn invisible","become invisible","fade from sight","vanish from sight","disappear from view"],"illusion":["project an illusion of a","make the guard see an illusion","conjure an illusory image"],"shapeshifting":["turn into a wolf","turn into a hawk","turn into a cat","transform into a wolf","transform into a bird","become a wolf","take the form of a wolf","take the shape of a bear"],"phasing":["phase through the wall","walk through the solid wall","become intangible and pass through"],"precognition":["glimpse what will happen next","see a few seconds into the future","look ten seconds ahead"],"mind_control":["plant a psychic suggestion","mentally compel him to obey"],"force_fields":["raise a force field","conjure a shield of force","raise an invisible barrier against the arrows"],"energy_projection":["fire an energy beam from my hands","shoot a blast of energy","project an energy bolt"],"summoning":["summon a spirit to aid me","conjure a creature beside me","call forth a magical ally"],"time_manipulation":["slow time around me","speed up time for myself","freeze time for a moment"],"mind_reading":["read the guard’s private thoughts","overhear his inner monologue","peek into her private thoughts","read secret thoughts","scan his mind for secrets","probe her subconscious with my mind","read his buried secrets","peer into his unconscious mind","read her forgotten memories psychically","read what she does not know about herself"],"technokinesis":["mentally interface with the phone","mentally operate the camera","psychically unlock the electronic door","talk to the device with my mind","read the computer with my mind","mentally hack the terminal","take control of the robot with my mind","psychically operate the console"]};
 
 SP_M2_COMMON_SIGNATURES.electrokinesis.push('shoot a bolt of lightning');
 // Registration is still controlled by the spell index; references provide no grants.
