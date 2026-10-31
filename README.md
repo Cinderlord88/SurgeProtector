@@ -53,7 +53,7 @@ Install the four JavaScript scripts in your AI Dungeon adventure and enter:
 
 Surge Protector also automatically creates two in-game Story Cards containing instructions and a full command reference.
 
-## ✅ STATUS: v1.0 — INITIAL RELEASE
+## ✅ STATUS: v1.3 — Power updates and live ScriptBridge API
 
 The core system is playable and will continue to receive improvements, refinements, and expanded ability support.
 
